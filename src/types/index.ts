@@ -1,0 +1,483 @@
+export type UserRole = 'contributor' | 'business' | 'moderator' | 'admin' | 'superadmin';
+export type UserStatus = 'active' | 'suspended' | 'pending_verification';
+export type ContributorLevel = 'starter' | 'explorer' | 'trusted' | 'pro' | 'elite';
+export type TaskDifficulty = 'easy' | 'medium' | 'hard';
+export type SubmissionStatus = 'submitted' | 'under_review' | 'approved' | 'rejected' | 'action_required';
+
+export interface User {
+  id: number;
+  uuid: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  status: UserStatus;
+  referral_code?: string;
+  /**
+   * Email-verification timestamp. `null` = explicitly unverified (Laravel
+   * sends `email_verified_at: null`) → show the verification gate.
+   * `undefined` = unknown/legacy response → do not gate.
+   */
+  email_verified_at?: string | null;
+  /**
+   * E.164 account phone ("+995501234567"), serialized from users.phone.
+   * Source of truth for the post-Google-signup phone gate (profile.phone
+   * is a legacy mirror).
+   */
+  phone?: string | null;
+  /** Returned by the API for every user; optional here for legacy mocks. */
+  created_at?: string;
+  profile?: Profile;
+  wallet?: Wallet;
+  business?: Business;
+  /** Effective permission names (login + /auth/me only). Undefined = unknown. */
+  permissions?: string[];
+}
+
+/** One referral commission level (GET /admin/referral-rules). */
+export interface ReferralRule {
+  level: number;
+  reward_mode: 'flat' | 'percent';
+  reward_cents: number;
+  /** Basis points: 1000 = 10%. */
+  percent_bps: number;
+  percent?: number;
+  is_enabled: boolean;
+  from_database?: boolean;
+  description: string;
+}
+
+export interface ReferralRuleInput {
+  level: number;
+  reward_mode: 'flat' | 'percent';
+  reward_cents?: number;
+  percent_bps?: number;
+  is_enabled: boolean;
+}
+
+export interface ReferralRulesResponse {
+  program_enabled: boolean;
+  levels: number;
+  qualification: { require_email_verified: boolean; require_first_task_approved: boolean };
+  /** Keyed by level number ("1", "2", …). */
+  rules: Record<string, ReferralRule>;
+  can_edit: boolean;
+}
+
+export type PermissionGroup = 'staff' | 'contributor' | 'business' | 'account' | 'other';
+
+export interface PermissionDef {
+  name: string;
+  label: string;
+  group: PermissionGroup;
+}
+
+export interface RolePermissions {
+  name: 'admin' | 'moderator' | 'contributor' | 'business';
+  label: string;
+  users_count: number;
+  permissions: string[];
+}
+
+export interface UserPermissionOverrides {
+  user: Pick<User, 'id' | 'name' | 'email' | 'role'>;
+  editable: boolean;
+  role_permissions: string[];
+  grants: string[];
+  denies: string[];
+  effective: string[];
+  permissions: PermissionDef[];
+}
+
+/** GET /admin/users/:id */
+export interface AdminUserDetail {
+  user: User & { referrer?: { id: number; name: string; email: string } | null };
+  stats: {
+    submissions: Record<string, number>;
+    submissions_total: number;
+    referrals: number;
+    tickets_open: number;
+  };
+  withdrawals: {
+    id: number;
+    amount_cents: number;
+    currency: string;
+    payout_method: string;
+    status: string;
+    created_at: string;
+    processed_at: string | null;
+  }[];
+  tickets: Pick<SupportTicket, 'id' | 'uuid' | 'reference' | 'subject' | 'category' | 'priority' | 'status' | 'created_at' | 'updated_at'>[];
+  audit: AuditLog[];
+  permissions: { role: string[]; grants: string[]; denies: string[]; effective: string[] };
+}
+
+export interface Profile {
+  id: number;
+  user_id: number;
+  avatar_url?: string;
+  phone?: string;
+  country_code: string;
+  city?: string;
+  language: string;
+  bio?: string;
+  contributor_level: ContributorLevel;
+  fraud_score: number;
+  completed_tasks_count: number;
+  approval_rate: number;
+  interests_json?: string[];
+  kyc_status?: KycStatus;
+  kyc_document_type?: KycDocumentType | null;
+  kyc_submitted_at?: string | null;
+  kyc_verified_at?: string | null;
+  kyc_rejection_reason?: string | null;
+  /** Which document sides are on file; paths themselves never leave the API. */
+  kyc_documents?: KycDocumentSide[];
+}
+
+export type KycStatus = 'unverified' | 'pending' | 'verified' | 'rejected';
+export type KycDocumentType = 'emirates_id' | 'passport' | 'national_id';
+export type KycDocumentSide = 'front' | 'back' | 'selfie';
+
+/** A row of the staff KYC queue (GET /staff/kyc): a profile with its user. */
+export interface KycSubmission extends Profile {
+  user: Pick<User, 'id' | 'uuid' | 'name' | 'email' | 'role' | 'status' | 'created_at'>;
+}
+
+export type TicketStatus = 'open' | 'in_progress' | 'resolved' | 'closed';
+export type TicketPriority = 'low' | 'normal' | 'high' | 'urgent';
+export type TicketCategory = 'payout' | 'dispute' | 'social' | 'bug' | 'account' | 'kyc' | 'business' | 'general';
+
+export interface SupportAttachment {
+  index: number;
+  name: string;
+  mime: string;
+  size: number;
+  is_image: boolean;
+}
+
+export interface SupportTicketMessage {
+  id: number;
+  message: string;
+  is_internal_note: boolean;
+  attachments: SupportAttachment[];
+  from_staff: boolean;
+  sender_name: string;
+  created_at: string;
+}
+
+export interface SupportTicket {
+  id: number;
+  uuid: string;
+  reference: string;
+  subject: string;
+  category: TicketCategory;
+  priority: TicketPriority;
+  status: TicketStatus;
+  description: string | null;
+  messages_count: number | null;
+  assigned_agent: { id: number; name: string } | null;
+  created_at: string;
+  updated_at: string;
+  /** Staff views only. */
+  user?: { id: number; name: string; email: string; role: UserRole } | null;
+  /** Detail views only. */
+  messages?: SupportTicketMessage[];
+}
+
+export interface Business {
+  id: number;
+  uuid: string;
+  owner_id: number;
+  company_name: string;
+  website?: string;
+  industry?: string;
+  billing_email?: string;
+  status: string;
+  verified_at?: string;
+}
+
+export interface Wallet {
+  id: number;
+  user_id: number;
+  currency: string;
+  available_balance_cents: number;
+  pending_balance_cents: number;
+  lifetime_earnings_cents: number;
+  total_withdrawn_cents: number;
+  is_locked: boolean;
+}
+
+export interface WalletTransaction {
+  id: number;
+  wallet_id: number;
+  type: 'task_reward' | 'referral_reward' | 'withdrawal' | 'withdrawal_reversal' | 'campaign_funding' | 'campaign_refund' | 'admin_adjustment' | 'bonus';
+  amount_cents: number;
+  balance_after_cents: number;
+  currency: string;
+  description: string;
+  metadata_json?: Record<string, any>;
+  created_at: string;
+}
+
+export interface TaskCategory {
+  id: number;
+  slug: string;
+  name: string;
+  description?: string;
+  icon: string;
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface Campaign {
+  id: number;
+  uuid: string;
+  business_id: number;
+  category_id: number;
+  /** Platform chosen in the wizard (Instagram, TikTok, …) — persisted on the campaign row. */
+  platform?: string | null;
+  title: string;
+  objective?: string;
+  description: string;
+  instructions_markdown?: string;
+  /** Wizard submits an array (["Screenshot", …]); older campaigns store a map ({ screenshot: true }). */
+  proof_requirements_json?: Record<string, unknown> | string[];
+  status: 'draft' | 'pending_review' | 'active' | 'paused' | 'completed' | 'cancelled';
+  total_budget_cents: number;
+  remaining_budget_cents: number;
+  reserved_budget_cents: number;
+  reward_per_task_cents: number;
+  platform_fee_cents: number;
+  target_contributors_count: number;
+  completed_contributors_count: number;
+  target_countries_json?: string[];
+  target_languages_json?: string[];
+  min_contributor_level: ContributorLevel;
+  retention_hours: number;
+  starts_at?: string;
+  ends_at?: string;
+  business?: Business;
+  category?: TaskCategory;
+  tasks?: Task[];
+  /** From StaffCampaignController::index ->withCount('tasks'). */
+  tasks_count?: number;
+}
+
+export interface Task {
+  id: number;
+  uuid: string;
+  campaign_id: number;
+  category_id: number;
+  title: string;
+  reward_cents: number;
+  estimated_minutes: number;
+  difficulty: TaskDifficulty;
+  status: 'available' | 'paused' | 'completed';
+  slots_total: number;
+  slots_taken: number;
+  category?: TaskCategory;
+  campaign?: Campaign;
+}
+
+export interface TaskSubmission {
+  id: number;
+  uuid: string;
+  task_id: number;
+  user_id: number;
+  assignment_id?: number;
+  status: SubmissionStatus;
+  proof_data_json: {
+    url?: string;
+    text_answer?: string;
+    note?: string;
+    device?: string;
+    location?: string;
+  };
+  reviewer_id?: number;
+  reviewed_at?: string;
+  review_notes?: string;
+  created_at: string;
+  task?: Task;
+  user?: User;
+  files?: SubmissionFile[];
+  aiResult?: AiVerificationResult;
+  /** Two-step review: the campaign business's recommendation (staff confirm the final decision). */
+  business_decision?: 'approved' | 'rejected' | null;
+  business_reason?: string | null;
+  business_reviewed_at?: string | null;
+  business_reviewer?: { id: number; name: string } | null;
+  reviewer?: { id: number; name: string } | null;
+  review_reason_code?: string | null;
+}
+
+export interface SubmissionFile {
+  id: number;
+  submission_id: number;
+  file_type: 'screenshot' | 'video' | 'url' | 'document';
+  file_path: string;
+  file_url: string;
+  file_size_bytes?: number;
+  mime_type?: string;
+}
+
+export interface AiVerificationResult {
+  id: number;
+  submission_id: number;
+  confidence_score: number;
+  risk_score: number;
+  duplicate_risk: number;
+  proof_quality: number;
+  content_match: number;
+  policy_match: number;
+  suggested_decision: 'approve' | 'reject' | 'flag';
+  analysis_summary: string;
+  /** True when the result comes from the pre-launch placeholder heuristic. Defaults to simulated. */
+  ai_simulated?: boolean;
+  /** Human-readable label supplied by the backend (e.g. "Simulated heuristic (pre-launch)"). */
+  ai_label?: string;
+}
+
+export interface WithdrawalRequest {
+  id: number;
+  uuid: string;
+  wallet_id: number;
+  user_id: number;
+  amount_cents: number;
+  fee_cents: number;
+  currency: string;
+  payout_method: string;
+  payout_details_json: Record<string, string>;
+  status: 'requested' | 'compliance_check' | 'processing' | 'paid' | 'failed' | 'rejected' | 'cancelled';
+  created_at: string;
+  processed_at?: string;
+  user?: User;
+}
+
+export interface FraudEvent {
+  id: number;
+  user_id?: number;
+  submission_id?: number;
+  event_type: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  details_json?: Record<string, any>;
+  status: string;
+  created_at: string;
+  user?: User;
+  submission?: TaskSubmission;
+}
+
+export interface FeatureFlag {
+  id: number;
+  key: string;
+  name: string;
+  description?: string;
+  is_enabled: boolean;
+}
+
+export interface AuditLog {
+  id: number;
+  actor_id?: number;
+  action: string;
+  entity_type: string;
+  entity_id: number;
+  before_state_json?: Record<string, any>;
+  after_state_json?: Record<string, any>;
+  ip_address?: string;
+  created_at: string;
+  actor?: User;
+  /** Short model name, e.g. "User" (from the fully-qualified entity_type). */
+  entity_model?: string;
+  /** Human label for the entity (user name, ticket ref, campaign title). */
+  entity_name?: string | null;
+}
+
+/** Referral row from GET /contributor/referrals (real API). Backend shape is
+ *  authoritative: { id, level, status, reward_cents, qualified_at,
+ *  referred_user: { id, name, joined_at } | null } — there is no `created_at`
+ *  and no referred_user.email on this row. */
+export interface ReferralEntry {
+  id: number;
+  status: string;
+  reward_cents: number;
+  /** Present on every row — the backend ships multi-level affiliate data. */
+  level: number;
+  qualified_at?: string | null;
+  referred_user?: { id: number; name: string; joined_at: string } | null;
+}
+
+/** Per-level stats from GET /contributor/referrals `by_level` (keys are level numbers). */
+export interface ReferralLevelStats {
+  total: number;
+  rewarded: number;
+  reward_cents: number;
+  reward_mode?: string;
+  reward_description?: string;
+}
+
+/** Referrals payload from GET /contributor/referrals (real API, backend shape).
+ *  Qualified counts and per-level reward amounts live under `by_level`. */
+export interface ReferralsData {
+  referral_code: string;
+  referral_link: string;
+  levels: number;
+  total_referred: number;
+  by_level: Record<number, ReferralLevelStats>;
+  total_earned_cents: number;
+  referrals: ReferralEntry[];
+}
+
+/**
+ * Task enriched for UI display. `platform` is derived client-side from the
+ * category/task title until the backend ships a dedicated platform field
+ * (Phase 4, Worker B) — the mapping is heuristic, not task data.
+ */
+export interface UiTask extends Task {
+  platform: string;
+  categoryName: string;
+  description: string;
+  country: string;
+  retentionHours: number;
+  brandName: string;
+  targetUrl?: string;
+  postCopy: string;
+  hashtags?: string;
+  flyerUrl?: string;
+  badgeColor?: string;
+}
+
+/** Generic platform setting row from GET /admin/system-settings (real API). */
+export interface SystemSetting {
+  key: string;
+  value: string | number | boolean | null;
+  description?: string;
+  updated_at?: string;
+}
+
+/** Withdrawal-threshold options per the owner mission brief (default $50). */
+export const WITHDRAWAL_THRESHOLD_OPTIONS = [10, 25, 50, 100] as const;
+
+/** Metrics from GET /business/dashboard (real API). */
+export interface BusinessDashboardData {
+  business?: Business;
+  metrics: {
+    active_campaigns: number;
+    total_campaigns: number;
+    verified_tasks: number;
+    total_budget_cents: number;
+    spent_budget_cents: number;
+    remaining_budget_cents: number;
+    average_cost_cents: number;
+  };
+  recent_submissions: TaskSubmission[];
+  active_campaigns_list: Campaign[];
+}
+
+/** Metrics from GET /admin/dashboard (real API). */
+export interface AdminDashboardMetrics {
+  total_contributors: number;
+  total_businesses: number;
+  active_campaigns: number;
+  pending_verification: number;
+  pending_payouts: number;
+  fraud_alerts_count: number;
+}

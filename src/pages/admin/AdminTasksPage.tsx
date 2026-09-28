@@ -1,0 +1,203 @@
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ClipboardList, Search, Loader2, AlertCircle, X, Eye } from 'lucide-react';
+import { tasksApi, getApiError } from '../../api';
+import type { Task } from '../../types';
+import { EmptyState } from '../../components/common/EmptyState';
+import { mapTaskForUi } from '../../utils/apiMappers';
+import { TaskPreview, TaskPreviewSummary } from '../../components/task/TaskPreview';
+
+/**
+ * Task listing for moderation. There is no dedicated admin task endpoint, so
+ * this view renders the public task catalog (GET /tasks) — the same tasks
+ * contributors see. Task creation/pausing belongs to businesses and their
+ * campaign workflow; moderation actions are pending a backend endpoint.
+ */
+export const AdminTasksPage: React.FC = () => {
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [previewTask, setPreviewTask] = useState<Task | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await tasksApi.list();
+      if (res.success) {
+        setTasks(res.data || []);
+      } else {
+        setError(res.message || 'Could not load tasks.');
+      }
+    } catch (e) {
+      setError(getApiError(e, 'Could not load tasks.'));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return tasks;
+    return tasks.filter(
+      (t) => t.title.toLowerCase().includes(q) || (t.campaign?.title || '').toLowerCase().includes(q),
+    );
+  }, [tasks, search]);
+
+  const statusStyle = (status: string) => {
+    switch (status) {
+      case 'available':
+        return 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300';
+      case 'paused':
+        return 'bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300';
+      default:
+        return 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-gray-400';
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-extrabold text-gray-900 dark:text-gray-100 tracking-tight">Tasks</h1>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+          Live task catalog across all campaigns — {tasks.length} task{tasks.length === 1 ? '' : 's'}.
+          Moderation actions (pause/remove) need a backend admin endpoint that is not available yet.
+        </p>
+      </div>
+
+      <div className="relative sm:w-72">
+        <Search className="w-4 h-4 text-gray-400 dark:text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search tasks or campaigns…"
+          className="w-full pl-9 pr-3 py-2.5 bg-white dark:bg-[#0C1322] border border-gray-200 dark:border-white/10 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-[#168BFF]/30 focus:border-[#168BFF]"
+        />
+      </div>
+
+      {loading && (
+        <div className="flex items-center justify-center py-16 text-gray-500 dark:text-gray-400">
+          <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading tasks…
+        </div>
+      )}
+
+      {error && !loading && (
+        <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/30 rounded-xl p-4 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-red-500 dark:text-red-300 mt-0.5 shrink-0" />
+          <div className="text-sm">
+            <p className="font-bold text-red-700 dark:text-red-300">Could not load tasks</p>
+            <p className="text-red-600 dark:text-red-400 mt-1">{error}</p>
+            <button type="button" onClick={() => void load()} className="mt-2 text-xs font-bold text-red-700 dark:text-red-300 underline">
+              Retry
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!loading && !error && filtered.length === 0 && (
+        <EmptyState
+          icon={ClipboardList}
+          title={tasks.length === 0 ? 'No tasks yet' : 'No tasks match your search'}
+          description={
+            tasks.length === 0
+              ? 'Tasks are created by businesses when they launch campaigns.'
+              : 'Try a different search term.'
+          }
+        />
+      )}
+
+      {!loading && !error && filtered.length > 0 && (
+        <div className="glass rounded-2xl overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[720px]">
+              <thead>
+                <tr className="text-left text-[11px] uppercase tracking-wider text-gray-400 dark:text-gray-500 border-b border-gray-100 dark:border-white/10">
+                  <th className="py-3 px-4 font-bold">Task</th>
+                  <th className="py-3 px-4 font-bold">Campaign</th>
+                  <th className="py-3 px-4 font-bold">Reward</th>
+                  <th className="py-3 px-4 font-bold">Slots</th>
+                  <th className="py-3 px-4 font-bold">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((t) => (
+                  <tr key={t.id} className="border-b border-gray-50 dark:border-white/5 last:border-0 hover:bg-gray-50/60 dark:hover:bg-white/5">
+                    <td className="py-3 px-4 font-bold text-gray-900 dark:text-gray-100">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewTask(t)}
+                        className="text-left hover:text-[#168BFF] hover:underline inline-flex items-center gap-1.5"
+                        title="Preview what contributors see"
+                      >
+                        <span>{t.title}</span>
+                        <Eye className="w-3.5 h-3.5 text-gray-400 dark:text-gray-500" />
+                      </button>
+                    </td>
+                    <td className="py-3 px-4 text-xs text-gray-600 dark:text-gray-400">{t.campaign?.title || `Campaign #${t.campaign_id}`}</td>
+                    <td className="py-3 px-4 text-xs font-bold text-gray-900 dark:text-gray-100">
+                      ${((t.reward_cents || 0) / 100).toFixed(2)}
+                    </td>
+                    <td className="py-3 px-4 text-xs text-gray-600 dark:text-gray-400">
+                      {t.slots_taken ?? 0} / {t.slots_total ?? 0}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span
+                        className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full ${statusStyle(t.status)}`}
+                      >
+                        {t.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Task preview modal — exactly what contributors see for this task. */}
+      {previewTask && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setPreviewTask(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Task preview"
+        >
+          <div
+            className="bg-[#F7F9FC] dark:bg-[#0B0F19] rounded-3xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-5 sm:p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-base font-black text-gray-900 dark:text-gray-100">Contributor preview</h2>
+                <p className="text-[11px] text-gray-500 dark:text-gray-400">What contributors see for this task, from live task data.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewTask(null)}
+                className="p-2 rounded-xl bg-white dark:bg-[#0C1322] border border-gray-200 dark:border-white/10 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
+                aria-label="Close preview"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {(() => {
+              const ui = mapTaskForUi(previewTask);
+              return (
+                <div className="grid sm:grid-cols-2 gap-4 items-start">
+                  <TaskPreview task={ui} />
+                  <TaskPreviewSummary task={ui} />
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
